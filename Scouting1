@@ -1,0 +1,87 @@
+import os
+from datetime import datetime, timedelta
+import json
+import requests
+import time
+
+class FederalContractingScouting:
+    def __init__(self, storage_file="scouting_report.json"):
+        self.api_key = os.getenv("SAM_GOV_API_KEY", "yfztBk00vlrpghK7wf84zDGKUnNtPPfiB3IgvFU6")
+        self.storage_file = storage_file
+    
+    def fetch_sam_gov_opportunities(self, naics_codes, start_date, end_date):
+        base_url = "https://api.sam.gov/prod/opportunities/v2/search"
+        headers = {"Accept": "application/json"}
+        
+        all_opportunities = []
+        start_date_obj = datetime.strptime(start_date, "%m/%d/%Y")
+        end_date_obj = datetime.strptime(end_date, "%m/%d/%Y")
+        
+        while start_date_obj < end_date_obj:
+            next_end_date_obj = min(start_date_obj + timedelta(days=365), end_date_obj)
+            params = {
+                "api_key": self.api_key,
+                "limit": 50,
+                "postedFrom": start_date_obj.strftime("%m/%d/%Y"),
+                "postedTo": next_end_date_obj.strftime("%m/%d/%Y"),
+                "filters": []
+            }
+            
+            for naics_code in naics_codes:
+                params["filters"].append(f"naicsCode:{naics_code}")
+            
+            try:
+                response = requests.get(base_url, params=params, headers=headers)
+                
+                if response.status_code == 429:
+                    print("Rate limit exceeded. Waiting before retrying...")
+                    time.sleep(10)
+                    continue
+                
+                response.raise_for_status()
+                data = response.json()
+                opportunities = data.get("opportunitiesData", [])
+                
+                if opportunities:
+                    all_opportunities.extend(opportunities)
+                else:
+                    print(f"No current opportunities found in range {params['postedFrom']} to {params['postedTo']}")
+            
+            except requests.exceptions.HTTPError as http_err:
+                print(f"HTTP error: {http_err} - {response.text}")
+            except requests.exceptions.RequestException as req_err:
+                print(f"Request error: {req_err}")
+            except Exception as e:
+                print(f"Unexpected error: {e}")
+            
+            start_date_obj = next_end_date_obj + timedelta(days=1)
+        
+        return all_opportunities
+    
+    def generate_scouting_report(self, naics_codes, start_date, end_date):
+        opportunities = self.fetch_sam_gov_opportunities(naics_codes, start_date, end_date)
+        
+        # Ensure the GitHub directory exists
+        report_directory = os.path.join("C:", "Users", "smgen", "OneDrive", "Documents", "GitHub")
+        if not os.path.exists(report_directory):
+            os.makedirs(report_directory)
+        
+        # Save report to JSON file
+        report_path = os.path.join(report_directory, "scouting_report.json")
+        with open(report_path, "w") as file:
+            json.dump(opportunities, file, indent=4)
+        
+        print(f"\nScouting Report saved to {report_path}")
+        return report_path
+
+# Example Usage
+if __name__ == "__main__":
+    scouting_tool = FederalContractingScouting()
+    
+    # User-specified date range and NAICS codes
+    start_date = "01/01/2024"
+    end_date = "03/17/2025"
+    naics_codes = ["424480", "311991"]
+    
+    scouting_report_path = scouting_tool.generate_scouting_report(naics_codes, start_date, end_date)
+    print(f"Scouting report generated at: {scouting_report_path}")
