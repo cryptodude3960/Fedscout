@@ -1,0 +1,99 @@
+import os
+from datetime import datetime, timedelta
+import json
+import requests
+import time
+
+class FederalContractingScouting:
+    def __init__(self, storage_file="scouting_report.json"):
+        self.api_key = os.getenv("SAM_GOV_API_KEY", "yfztBk00vlrpghK7wf84zDGKUnNtPPfiB3IgvFU6")
+        self.storage_file = storage_file
+    
+    def fetch_sam_gov_opportunities(self, naics_codes, start_date, end_date):
+        base_url = "https://api.sam.gov/prod/opportunities/v2/search"
+        headers = {"Accept": "application/json"}
+
+        all_opportunities = []
+        start_date_obj = datetime.strptime(start_date, "%m/%d/%Y")
+        end_date_obj = datetime.strptime(end_date, "%m/%d/%Y")
+
+        max_retries = 5  # Max retries before giving up
+        retry_delay = 10  # Start with a 10-second wait
+
+        while start_date_obj < end_date_obj:
+            next_end_date_obj = min(start_date_obj + timedelta(days=365), end_date_obj)
+            params = {
+                "api_key": self.api_key,
+                "limit": 50,
+                "postedFrom": start_date_obj.strftime("%m/%d/%Y"),
+                "postedTo": next_end_date_obj.strftime("%m/%d/%Y"),
+                "filters": []
+            }
+
+            for naics_code in naics_codes:
+                params["filters"].append(f"naicsCode:{naics_code}")
+
+            attempt = 0
+            while attempt < max_retries:
+                try:
+                    response = requests.get(base_url, params=params, headers=headers)
+
+                    if response.status_code == 429:  # Rate limit error
+                        print(f"Rate limit exceeded. Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 2, 120)  # Exponential backoff (caps at 120s)
+                        attempt += 1
+                        continue  # Retry the request
+                    
+                    response.raise_for_status()
+                    data = response.json()
+                    opportunities = data.get("opportunitiesData", [])
+
+                    if opportunities:
+                        all_opportunities.extend(opportunities)
+                    else:
+                        print(f"No current opportunities found for range {params['postedFrom']} to {params['postedTo']}")
+
+                    break  # Break retry loop if successful
+
+                except requests.exceptions.HTTPError as http_err:
+                    print(f"HTTP error: {http_err} - {response.text}")
+                    break  # Do not retry for HTTP errors other than 429
+                except requests.exceptions.RequestException as req_err:
+                    print(f"Request error: {req_err}")
+                    break
+                except Exception as e:
+                    print(f"Unexpected error: {e}")
+                    break
+            
+            start_date_obj = next_end_date_obj + timedelta(days=1)
+
+        return all_opportunities
+    
+    def generate_scouting_report(self, naics_codes, start_date, end_date):
+        opportunities = self.fetch_sam_gov_opportunities(naics_codes, start_date, end_date)
+        
+        # Ensure the GitHub directory exists
+        report_directory = os.path.join("C:", "Users", "smgen", "OneDrive", "Documents", "GitHub")
+        if not os.path.exists(report_directory):
+            os.makedirs(report_directory)
+        
+        # Save report to JSON file
+        report_path = os.path.join(report_directory, "scouting_report.json")
+        with open(report_path, "w") as file:
+            json.dump(opportunities, file, indent=4)
+        
+        print(f"\nScouting Report saved to {report_path}")
+        return report_path
+
+# Example Usage
+if __name__ == "__main__":
+    scouting_tool = FederalContractingScouting()
+    
+    # User-specified date range and NAICS codes
+    start_date = "01/01/2024"
+    end_date = "03/17/2025"
+    naics_codes = ["424480", "311991"]
+    
+    scouting_report_path = scouting_tool.generate_scouting_report(naics_codes, start_date, end_date)
+    print(f"Scouting report generated at: {scouting_report_path}")
