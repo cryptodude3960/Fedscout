@@ -1,0 +1,114 @@
+import os
+from datetime import datetime, timedelta
+import json
+import requests
+import time
+
+class FederalContractingScouting:
+    def __init__(self, storage_file="scouting_report.json"):
+        self.api_key = os.getenv("SAM_GOV_API_KEY", "yfztBk00vlrpghK7wf84zDGKUnNtPPfiB3IgvFU6")
+        self.storage_file = storage_file
+
+        self.target_naics = ["424480", "311991"]
+        self.target_psc = ["8915"]
+        self.keywords = [
+            "produce", "fruits", "vegetables", "lettuce", "onions", "tomatoes", "apples", "potatoes",
+            "fresh", "perishable", "chilled", "organic", "DeCA", "commissary", "DLA Troop Support",
+            "Defense Commissary Agency", "USDA food", "Farm to School", "produce box"
+        ]
+        self.target_agencies = [
+            "Defense Commissary Agency", "DLA Troop Support", "USDA", "Department of Defense"
+        ]
+
+    def fetch_sam_gov_opportunities(self, start_date, end_date):
+        base_url = "https://api.sam.gov/prod/opportunities/v2/search"
+        headers = {"Accept": "application/json"}
+        all_opportunities = []
+
+        start_date_obj = datetime.strptime(start_date, "%m/%d/%Y")
+        end_date_obj = datetime.strptime(end_date, "%m/%d/%Y")
+
+        max_retries = 5
+        retry_delay = 10
+
+        while start_date_obj < end_date_obj:
+            next_end_date_obj = min(start_date_obj + timedelta(days=365), end_date_obj)
+
+            params = {
+                "api_key": self.api_key,
+                "limit": 50,
+                "postedFrom": start_date_obj.strftime("%m/%d/%Y"),
+                "postedTo": next_end_date_obj.strftime("%m/%d/%Y"),
+            }
+
+            attempt = 0
+            while attempt < max_retries:
+                try:
+                    response = requests.get(base_url, params=params, headers=headers)
+
+                    if response.status_code == 429:
+                        print(f"Rate limited. Waiting {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 2, 120)
+                        attempt += 1
+                        continue
+
+                    response.raise_for_status()
+                    data = response.json()
+                    raw_opportunities = data.get("opportunitiesData", [])
+
+                    for opp in raw_opportunities:
+                        title = opp.get("title", "").lower()
+                        description = opp.get("description", "").lower()
+                        naics = opp.get("naicsCodes", [])
+                        psc = opp.get("classificationCode", "")
+                        agency = opp.get("fullParentPathName", "").lower()
+
+                        if (
+                            any(code in naics for code in self.target_naics)
+                            or psc in self.target_psc
+                            or any(k in title or k in description for k in self.keywords)
+                            or any(a.lower() in agency for a in self.target_agencies)
+                        ):
+                            all_opportunities.append(opp)
+
+                    break
+
+                except requests.exceptions.HTTPError as http_err:
+                    print(f"HTTP error: {http_err} - {response.text}")
+                    break
+                except requests.exceptions.RequestException as req_err:
+                    print(f"Request error: {req_err}")
+                    break
+                except Exception as e:
+                    print(f"Unexpected error: {e}")
+                    break
+
+            start_date_obj = next_end_date_obj + timedelta(days=1)
+
+        return all_opportunities
+
+    def generate_scouting_report(self, start_date, end_date):
+        opportunities = self.fetch_sam_gov_opportunities(start_date, end_date)
+
+        report_directory = os.path.join("C:", "Users", "smgen", "OneDrive", "Documents", "GitHub")
+        if not os.path.exists(report_directory):
+            os.makedirs(report_directory)
+
+        report_path = os.path.join(report_directory, "scouting_report.json")
+        with open(report_path, "w") as file:
+            json.dump(opportunities, file, indent=4)
+
+        print(f"\nScouting Report saved to {report_path}")
+        return report_path
+
+
+# 🚀 Run it!
+if __name__ == "__main__":
+    scouting_tool = FederalContractingScouting()
+
+    start_date = "01/01/2024"
+    end_date = "03/24/2025"
+
+    scouting_report_path = scouting_tool.generate_scouting_report(start_date, end_date)
+    print(f"Scouting report generated at: {scouting_report_path}")
