@@ -1,0 +1,56 @@
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from typing import List
+from scouting_backend_final import FedScoutEngine  # Ensure this matches your backend file/module
+
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+scout = FedScoutEngine()
+
+# Your category to code mapping
+category_code_map = {
+    "Bottled water": {"NAICS": ["312112"], "PSC": ["8945"]},
+    "Office Supplies": {"NAICS": ["339940"], "PSC": ["7510", "7520"]},
+    "Stainless Steel Sheets": {"NAICS": ["331110"], "PSC": ["9515"]},
+    "Aerospace Metals": {"NAICS": ["336413"], "PSC": ["1560"]},
+    "Emergency Kits": {"NAICS": ["339113"], "PSC": ["6545"]},
+    "Logistics": {"NAICS": ["484110"], "PSC": ["V112", "V119"]},
+    "Custom Pallets": {"NAICS": ["321920"], "PSC": ["8115", "3990"]},
+    "Construction Materials": {"NAICS": ["327320", "321999"], "PSC": ["5610", "5615"]},
+    "Produce": {"NAICS": ["424480"], "PSC": ["8915"]},
+    "Janitorial Supplies": {"NAICS": ["325612"], "PSC": ["7920", "7930"]}
+}
+
+@app.get("/", response_class=HTMLResponse)
+async def form(request: Request):
+    return templates.TemplateResponse("form.html", {"request": request, "categories": list(category_code_map.keys())})
+
+@app.get("/custom-search", response_class=HTMLResponse)
+async def custom_search(request: Request, category: List[str] = []):
+    selected_naics = []
+    selected_psc = []
+
+    for cat in category:
+        selected_naics += category_code_map.get(cat, {}).get("NAICS", [])
+        selected_psc += category_code_map.get(cat, {}).get("PSC", [])
+
+    results_raw = scout.search_produce_opportunities(
+        use_default_naics=False,
+        use_default_psc=False,
+        use_default_keywords=False,
+        use_default_agencies=False,
+        additional_naics=selected_naics,
+        additional_psc=selected_psc
+    )
+
+    results = [scout.extract_opportunity_highlights(opp) for opp in results_raw.get("opportunities", [])]
+
+    return templates.TemplateResponse("results.html", {
+        "request": request,
+        "selected": category,
+        "results": results
+    })
